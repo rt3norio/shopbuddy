@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "ShopBuddy",
+  "version": "0.1.0",
+  "description": "Traduz páginas de compra (Mercado Livre, Amazon, Shopee, AliExpress) em JSON compacto com ids clicáveis para o Claude.",
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.mercadolivre.com.br/*",
+        "*://*.mercadolibre.com/*",
+        "*://*.mercadolibre.com.ar/*",
+        "*://*.mercadolibre.com.mx/*",
+        "*://*.amazon.com.br/*",
+        "*://*.amazon.com/*",
+        "*://shopee.com.br/*",
+        "*://*.shopee.com.br/*",
+        "*://*.aliexpress.com/*",
+        "*://*.aliexpress.us/*"
+      ],
+      "js": ["shopbuddy.js"],
+      "world": "MAIN",
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
