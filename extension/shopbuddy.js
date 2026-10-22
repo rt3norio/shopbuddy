@@ -494,8 +494,10 @@
         const ship = lines(right).filter(l => SHIP_RE.test(l) && !/mais detalhes|monte um carrinho/i.test(l)).slice(0, 3).join(' · ');
         const sellerEl = $('.ui-pdp-seller__link-trigger, .ui-pdp-seller-summary__title, [class*=seller-summary] [class*=title]', right);
         const otherOffers = $$('a', document.body).find(a => sized(a) && /(op[cç][oõ]es de compra|outras op[cç][oõ]es|ver op[cç][oõ]es)/i.test(label(a)));
-        const vgroups = $$('.ui-pdp-variations__picker').length
-          ? variants(document.body, { group: '.ui-pdp-variations__picker', name: '.ui-pdp-variations__label', opt: 'a, button, [role=radio], .andes-dropdown__trigger' })
+        // "outside_variations" is the picker ML uses on "Escolha valor/cor" listings.
+        const PICKER = '.ui-pdp-variations__picker, .ui-pdp-outside_variations__picker';
+        const vgroups = $$(PICKER).length
+          ? variants(document.body, { group: PICKER, name: '[class*="variations__label"], [class*="__title"]', opt: 'a, button, [role=radio], .andes-dropdown__trigger' })
           : undefined;
         return {
           product: genericProduct({
