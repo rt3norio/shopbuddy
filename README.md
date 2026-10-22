@@ -48,10 +48,32 @@ Sem a extensão, tudo continua funcionando: o MCP injeta via `evaluate_script(so
 | `snap({n,from,all})` / `s()` | página → objeto / texto compacto |
 | `click(id)` `type(id,txt,{enter})` `select(id,v)` | agir por id |
 | `search(q,[site])` `cart([site])` `addToCart([itemId])` `go(url)` | atalhos |
+| `setQty(itemId, n)` | muda a quantidade de um item do carrinho (+/− ou select) |
+| `orders([site])` `orderInfo([ids])` | abre "minhas compras"; busca valores/pagamento dos pedidos em segundo plano (ML) |
 | `find(txt,{any})` `read(id)` `scroll(dir\|id)` `wait(ms\|txt\|sel)` | utilidades |
 | `notify(msg)` | aviso visível para o usuário na página |
 
-Tipos de página: `search`, `product`, `cart`, `checkout`, `login`, `captcha`, `other`.
+Tipos de página: `search`, `product`, `cart`, `checkout`, `orders`, `order`, `login`, `captcha`, `other`.
+
+### Carrinho (ML)
+```
+"cart":{
+  "groups":[{"g":1,"seller":"FULL","ship":0,"shipWas":13.6},
+            {"g":2,"seller":"LOJA_EXEMPLO","ship":8.99,"hint":"Adicione R$ 11,10 para ter frete grátis…"}],
+  "items":[{"id":"p6","g":1,"name":"Barra De Pinos Macho 1x40…","price":19.9,"qty":"1","inc":"a7","dec":"a8","del":"a9","sel":"f10 [x]"}],
+  "summary":{"Produtos (2)":27.8,"Desconto de produtos":-1.65,"Envios":8.99,"Total":35.14},
+  "checkout":"a51"}
+```
+
+### Compras já feitas
+O ML não mostra preço na lista de compras, só no detalhe, e cobra por compra (carrinho fechado),
+não por item. `orderInfo()` abre os detalhes por `fetch` sem sair da lista:
+```
+{"id":"o1","date":"3 de março","name":"Kit 100 Resistores 10k 1/4w","qty":"1 unidade","status":"Entregue","purchase":"2000000000000001"}
+orderInfo("o1") → {"number":"2000000000000001","amounts":{"Produtos (3)":120.5,"Desconto à vista":-6.02,"Frete":0,
+                   "Pagamentos":"Uma parcela de R$ 114,48 Visa **** 0000","Total":114.48}}
+```
+No AliExpress a lista já traz tudo: `{"date":"5 jun, 2025","number":"8200000000000001","status":"Concluído","seller":"Example Store","items":["Placa de desenvolvimento ESP32… [V3] R$ 99.9 x1"],"total":112.4}`.
 
 ## CLI
 Precisa de um Chrome com `--remote-debugging-port` (endpoints `/json`). O Chrome no modo toggle
@@ -73,5 +95,9 @@ apita, mostra o aviso e espera até 5 min (`--no-wait` desliga).
   adicionar → carrinho (itens, qty, +/−, remover, resumo) → remover; login detectado.
 - **Amazon**: busca, produto com variações (com preço por variação), adicionar, carrinho, excluir.
 - **AliExpress**: busca, produto (variações, frete), adicionar (gaveta lateral), carrinho.
+- **Carrinho ML** (2026-10-22): grupos por vendedor com frete/frete original/dica de frete grátis, resumo numérico, `setQty` 1→2→1.
+- **Compras ML**: lista (data, status, entrega, vendedor, compra), `orderInfo` (valores, desconto, frete, pagamentos, total), busca nos pedidos.
+- **Compras AliExpress**: lista com número, status, loja, itens (variação, preço × qtd), total e "ver mais pedidos".
+- **Compras Amazon/Shopee**: extrator escrito pela estrutura conhecida, ainda não testado logado.
 - **Shopee**: sem login, cai em `/verify/traffic` → `page:"captcha"` + aviso ao usuário. Busca, produto e
   carrinho usam o extrator genérico (cards agrupados por link de produto), ainda não testados logado.

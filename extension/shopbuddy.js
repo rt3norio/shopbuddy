@@ -85,9 +85,12 @@
       for (const c of n.childNodes) walk(c);
     };
     walk(root);
-    return out.join('');
+    return moneyWords(out.join(''));
   }
 
+  // ML spells amounts out for screen readers ("521 reais com 22 centavos"); turn them back into R$.
+  const moneyWords = s => s.replace(/([-‐-―−]\s*)?(?<![\d.,])(\d{1,3}(?:\.\d{3})+|\d+) rea(?:is|les|l)(?: (?:com|con) (\d{1,2}) centavos?)?/gi,
+    (m, neg, r, c) => `${neg ? '-' : ''}R$ ${r}${c ? ',' + c.padStart(2, '0') : ''}`);
   const strip = s => s.replace(/[\u0001\u0002]/g, '');
   function lines(root, max) {
     const res = [];
@@ -119,7 +122,8 @@
   }
 
   // Returns {price, old} from raw text (with strike markers).
-  function prices(raw) {
+  // opts.ship: the text is a shipping line, so "Frete R$ 8,99" is the value we want, not noise.
+  function prices(raw, opts = {}) {
     let cur = null, old = null;
     for (const m of raw.matchAll(PRICE_RE)) {
       const before = raw.slice(0, m.index);
@@ -127,7 +131,8 @@
       const ctx = strip(before.slice(-24));
       const struck = (before.split('\u0001').length - before.split('\u0002').length) > 0;
       const isOld = struck || /(antes|de|was|list price|pre[cç]o original)\s*:?\s*$/i.test(ctx);
-      if (/(\d\s?x\s*(de)?|parcelas? de|economize|save|frete|envio|shipping|cupom)\s*:?\s*$/i.test(ctx)) continue;
+      if (/(\d\s?x\s*(de)?|parcelas? de|economize|save|cupom)\s*:?\s*$/i.test(ctx)) continue;
+      if (!opts.ship && /(frete|envio|shipping)\s*:?\s*$/i.test(ctx)) continue;
       if (/^\s*(off|de desconto|sem juros|\/m[eê]s)/i.test(after)) continue;
       const n = priceNum(m[2]);
       if (n == null) continue;
@@ -267,7 +272,7 @@
   }
 
   function searchBox() {
-    return $$('input[type=search],input[name=q],input[name=k],input[name=keyword],input[name=as_word],input[name=SearchText],input#cb1-edit,input#twotabsearchtextbox,input[placeholder*="usca" i],input[placeholder*="search" i]')
+    return $$('input[type=search],input[name=q],input[name=k],input[name=keyword],input[name=as_word],input[name=SearchText],input#cb1-edit,input#twotabsearchtextbox,input[placeholder*="usca" i],input[placeholder*="usque" i],input[placeholder*="search" i],input#searchOrdersInput')
       .find(sized);
   }
 
@@ -460,8 +465,11 @@
       cartUrl: () => 'https://www.mercadolivre.com.br/gz/cart',
       searchUrl: q => `https://lista.mercadolivre.com.br/${encodeURIComponent(norm(q).replace(/\s+/g, '-'))}`,
       key: h => (h.match(/MLB-?U?\d{6,}/) || [])[0]?.replace('-', ''),
+      ordersUrl: () => 'https://myaccount.mercadolivre.com.br/my_purchases/list',
       page() {
         const p = location.pathname;
+        if (/^myaccount\./.test(location.hostname) && /\/(my_)?purchases\/list/.test(p)) return 'orders';
+        if (/\/my_purchases\/\d+/.test(p)) return 'order';
         if (/\/gz\/cart|\/carrinho/.test(p)) return 'cart';
         if (/checkout/.test(p)) return 'checkout';
         if ($('.ui-pdp-title') || /\/p\/MLB|\/up\/MLBU|MLB-\d+/.test(p)) return 'product';
@@ -517,7 +525,7 @@
         };
       },
       cart() {
-        const items = $$('.cl-item-card').filter(visible).map(card => {
+        const item = (card, g) => {
           const link = $('a[href*="MLB"], a[href]', card);
           const name = tx('[class*=title]', card) || label(link);
           const qtyTxt = norm($('[class*=stepper] input, [class*=quantity-selector] input', card)?.value ||
@@ -528,15 +536,103 @@
           const chk = $('input[type=checkbox]', card);
           const pr = prices(rawText($('.cl-price', card) || card));
           return prune({
-            id: tag(link, 'p'), name: clip(name, 90), price: pr.price, old: pr.old,
+            id: tag(link, 'p'), g, name: clip(name, 90), price: pr.price, old: pr.old,
             qty: qtyTxt || undefined, inc: inc && tag(inc), dec: dec && tag(dec), del: del && tag(del),
             sel: chk ? `${tag(chk, 'f')}${chk.checked ? ' [x]' : ' [ ]'}` : undefined,
           });
+        };
+        // The cart is grouped per seller (and one "FULL" group); shipping is charged per group.
+        const groups = [], items = [];
+        $$('article.cl-grouped-card__container').filter(visible).forEach((art, i) => {
+          const g = i + 1;
+          const head = textOf($('[class*=header], [class*=title]', art) || EMPTY, 300).replace(/^Produtos( de)?\s*/i, '');
+          const shipRow = $('.cl-card-footer__ticket-row', art);
+          const shipTxt = shipRow ? textOf(shipRow) : '';
+          const sp = shipRow ? prices(rawText(shipRow), { ship: true }) : {};
+          const hint = lines($('.andes-card__footer', art) || EMPTY).find(l => /adicione|faltam?/i.test(l));
+          groups.push(prune({
+            g, seller: clip(head.split(/Produtos( de)?/i)[0].trim(), 50),
+            ship: /gr[aá]tis/i.test(shipTxt) ? 0 : sp.price, shipWas: sp.old ?? (/gr[aá]tis/i.test(shipTxt) ? sp.price : undefined),
+            hint: clip(hint, 100),
+          }));
+          for (const card of $$('.cl-item-card', art)) items.push(item(card, g));
         });
-        const sumEl = $('[class*=cl-summary]');
-        const summary = sumEl ? lines(sumEl).filter(l => /\d/.test(l) || /total/i.test(l)).slice(0, 8) : [];
+        if (!groups.length) for (const card of $$('.cl-item-card').filter(visible)) items.push(item(card));
+        const summary = {};
+        for (const row of $$('.cl-summary__row, .cl-summary__savings-row')) {
+          const raw = rawText(row);
+          const pr = prices(raw);
+          if (pr.price == null) continue;
+          const key = strip(raw).split(/-?\s*R\$/)[0].trim();
+          summary[clip(norm(key), 40) || 'valor'] = /[-‐-―−]\s*R\$/.test(strip(raw)) || /desconto/i.test(key) ? -pr.price : pr.price;
+        }
         const checkout = $('.cl-summary__button') || byText(/^continuar/i);
-        return { cart: { items, summary, checkout: checkout && tag(checkout) } };
+        return { cart: { groups, items, summary, checkout: checkout && tag(checkout) } };
+      },
+      // "Minhas compras": one entry per package, grouped under a date header. The list has no prices:
+      // those live in the purchase detail (see order / ShopBuddy.orderInfo).
+      orders() {
+        const orders = [];
+        for (const grp of $$('.list-item-grouper')) {
+          const date = tx('.list-item-grouper__text', grp);
+          for (const it of $$('.list-item', grp)) {
+            const views = $$('a[href*="/my_purchases/"]', it);
+            const view = views.find(a => /ver compra/i.test(label(a))) || views[0];
+            const prod = $('.list-item__link', it);
+            const again = $$('a', it).find(a => /comprar novamente/i.test(label(a)));
+            orders.push(prune({
+              id: tag(view, 'o'), date,
+              status: tx('.list-item__intro', it),
+              info: clip([tx('.list-item__title', it), tx('.list-item__description', it)].filter(Boolean).join(' · '), 120),
+              name: clip((prod && textOf(prod)) || $('img[alt]', it)?.alt, 90),
+              qty: tx('.list-item__info', it),
+              seller: tx('.text-with-link__subtext', it) || tx('.text-with-link__text', it),
+              purchase: (view?.href.match(/my_purchases\/(\d+)/) || [])[1],
+              product: prod ? tag(prod, 'p') : undefined,
+              again: again ? tag(again) : undefined,
+            }));
+          }
+        }
+        const total = lines($('main') || document.body, 4000).find(l => /^\d[\d.]* compras?$/i.test(l));
+        return { orders, total };
+      },
+      // Purchase detail; works on the live page or on a document fetched by orderInfo().
+      order(root = document) {
+        const ticket = $('.bf-ui-ticket', root);
+        const sub = ticket ? textOf($('.bf-ui-ticket__subtitle', ticket) || EMPTY) : '';
+        const amounts = {};
+        let lastKey;
+        for (const row of ticket ? $$('.bf-ui-ticket-row', ticket) : []) {
+          const left = textOf($('[class*=left-column]', row) || EMPTY);
+          const right = $('[class*=right-column]', row) || row;
+          const raw = rawText(right);
+          const pr = prices(raw);
+          const txt = norm(strip(raw));
+          const val = /parcela|x\s*R\$/i.test(txt) || pr.price == null
+            ? (/gr[aá]tis/i.test(txt) ? 0 : clip(txt, 80))
+            : (/^-/.test(txt) ? -pr.price : pr.price);
+          // A second payment method comes as a row without its own label.
+          if (!left) { if (lastKey && typeof amounts[lastKey] === 'string') amounts[lastKey] += ` + ${val}`; continue; }
+          lastKey = clip(left, 40);
+          if (/^total/i.test(left) && pr.price != null) {
+            amounts[lastKey] = pr.price;
+            if (typeof val === 'string' && !Object.keys(amounts).some(k => /pagamento/i.test(k))) amounts.Pagamento = val;
+            continue;
+          }
+          amounts[lastKey] = val;
+        }
+        const items = $$('[class*=context-with-ellipsis__title]', root).map((t, i, all) => {
+          const sub2 = textOf(t.parentElement?.querySelector('[class*=context-with-ellipsis__subtitle]') || EMPTY);
+          return clip(`${textOf(t)}${sub2 ? ' — ' + sub2.replace(/\s*\|?\s*ver detalhe/i, '') : ''}`, 100);
+        });
+        return prune({
+          date: sub.split('|')[0].trim() || undefined,
+          number: (sub.match(/#\s*(\d+)/) || [])[1],
+          status: clip([textOf($('.feedback-container-title', root) || EMPTY), textOf($('.feedback-container-description', root) || EMPTY)].filter(Boolean).join(' · '), 160),
+          items: [...new Set(items)],
+          amounts,
+          seller: clip(textOf($('.text-with-link__subtext, .text-with-link__text', root) || EMPTY), 50),
+        });
       },
     },
 
@@ -549,6 +645,8 @@
         const p = location.pathname;
         if ($('form[action*="validateCaptcha"]')) return 'captcha';
         if (/\/ap\/signin/.test(p)) return 'login';
+        if (/\/your-orders\/orders|\/gp\/css\/order-history|\/gp\/your-account\/order-history/.test(p)) return 'orders';
+        if (/order-details/.test(p)) return 'order';
         if (/\/gp\/cart|\/cart\//.test(p)) return 'cart';
         if (/\/gp\/buy|\/checkout/.test(p)) return 'checkout';
         if ($('#productTitle')) return 'product';
@@ -627,17 +725,40 @@
         const checkout = $('input[name="proceedToRetailCheckout"], [name="proceedToRetailCheckout"]');
         return { cart: { items, summary, checkout: checkout && tag(checkout) } };
       },
+      ordersUrl: () => `${location.hostname.includes('amazon') ? location.origin : 'https://www.amazon.com.br'}/gp/css/order-history`,
+      orders() {
+        const orders = $$('.order-card, .js-order-card').filter(visible).map(card => {
+          const hl = lines($('.order-header', card) || card, 3000);
+          const det = $('a[href*="order-details"]', card);
+          const items = [...new Set($$('.yohtmlc-product-title, .yohtmlc-item a.a-link-normal, a.a-link-normal[href*="/dp/"]', card)
+            .map(a => clip(textOf(a), 100)).filter(t => t && t.length > 3))];
+          const again = $$(INTERACTIVE, card).find(b => /comprar novamente|buy it again/i.test(label(b)));
+          return prune({
+            id: tag(det, 'o'),
+            date: labeled(hl, /^(pedido realizado|order placed)/i),
+            total: priceNum(labeled(hl, /^total/i)),
+            number: (hl.join(' ').match(/\d{3}-\d{7}-\d{7}/) || [])[0],
+            status: tx('.delivery-box__primary-text, .yohtmlc-shipment-status-primaryText, .shipment-top-row .a-text-bold', card),
+            items,
+            again: again ? tag(again) : undefined,
+          });
+        });
+        return { orders, total: tx('.num-orders') };
+      },
     },
 
     shopee: {
       host: /(^|\.)shopee\.[a-z.]+$/,
       cartUrl: () => `${location.hostname.includes('shopee') ? location.origin : 'https://shopee.com.br'}/cart`,
       searchUrl: q => `${location.hostname.includes('shopee') ? location.origin : 'https://shopee.com.br'}/search?keyword=${encodeURIComponent(norm(q))}`,
+      ordersUrl: () => `${location.hostname.includes('shopee') ? location.origin : 'https://shopee.com.br'}/user/purchase`,
       key: h => { const m = h.match(/-i\.(\d+)\.(\d+)|\/product\/(\d+)\/(\d+)/); return m ? (m[1] ? `${m[1]}.${m[2]}` : `${m[3]}.${m[4]}`) : undefined; },
       page() {
         const p = location.pathname;
         if (/\/verify\//.test(p)) return 'captcha';
         if (/\/buyer\/login|\/buyer\/signup/.test(p)) return 'login';
+        if (/^\/user\/purchase\/?$/.test(p)) return 'orders';
+        if (/^\/user\/purchase\/order/.test(p)) return 'order';
         if (/^\/cart/.test(p)) return 'cart';
         if (/checkout/.test(p)) return 'checkout';
         if (/-i\.\d+\.\d+|\/product\/\d+\/\d+/.test(p)) return 'product';
@@ -664,10 +785,13 @@
       cartUrl: () => `${location.hostname.includes('aliexpress') ? location.origin : 'https://pt.aliexpress.com'}/p/shoppingcart/index.html`,
       searchUrl: q => `${location.hostname.includes('aliexpress') ? location.origin : 'https://pt.aliexpress.com'}/w/wholesale-${encodeURIComponent(norm(q).replace(/\s+/g, '-'))}.html`,
       key: h => (h.match(/\/item\/(\d{6,})\.html/) || [])[1],
+      ordersUrl: () => 'https://www.aliexpress.com/p/order/index.html',
       page() {
         const p = location.pathname;
         if (/_____tmd_____|punish|\/captcha/.test(location.href) || $$('#nc_1_n1z, .nc_wrapper, #baxia-dialog-content, iframe[src*="punish"]').some(visible)) return 'captcha';
         if (/^login\./.test(location.hostname)) return 'login';
+        if (/\/p\/order\/index/.test(p)) return 'orders';
+        if (/\/p\/order\/detail/.test(p)) return 'order';
         if (/shoppingcart|\/cart/.test(p)) return 'cart';
         if (/checkout|\/trade\/confirm|\/order\/confirm/.test(p)) return 'checkout';
         if (/\/item\/\d+\.html/.test(p)) return 'product';
@@ -711,8 +835,47 @@
         };
       },
       cart() { return { cart: genericCart(this.key) }; },
+      // The order list already carries date, items, unit price × qty and total.
+      // Its "Deletar" button removes the order from history: deliberately not exposed.
+      orders() {
+        const orders = $$('.order-item').filter(visible).map(it => {
+          const hdr = lines($('.order-item-header', it) || EMPTY);
+          const det = $('a[href*="order/detail"]', it);
+          const again = $$('button', it).find(b => /adicionar ao carrinho|add to cart/i.test(label(b)));
+          const items = $$('.order-item-content-body', it).map(b => {
+            const nm = $('.order-item-content-info-name [title]', b)?.getAttribute('title') || tx('.order-item-content-info-name', b);
+            const sku = tx('.order-item-content-info-sku', b);
+            const num = $('.order-item-content-info-number', b);
+            const pr = num ? prices(rawText(num)).price : null;
+            const q = num ? (textOf(num).match(/x\s*(\d+)/i) || [])[1] : null;
+            return `${clip(norm(nm), 70)}${sku ? ` [${clip(sku, 30)}]` : ''}${pr != null ? ` R$ ${pr}` : ''}${q ? ` x${q}` : ''}`;
+          });
+          return prune({
+            id: tag(det, 'o'),
+            date: labeled(hdr, /^(data|order date|pedido feito em)/i),
+            number: (hdr.join(' ').match(/(\d{12,})/) || [])[1],
+            status: tx('.order-item-header-status-text', it),
+            seller: tx('.order-item-store-name', it),
+            items,
+            total: prices(rawText($('.order-item-content-opt-price-total', it) || EMPTY)).price,
+            again: again ? tag(again) : undefined,
+          });
+        });
+        const more = $$('button').find(b => sized(b) && /ver mais pedidos|view more orders|more orders/i.test(label(b)));
+        return { orders, more: more ? tag(more) : undefined };
+      },
     },
   };
+
+  // Value next to a label in a list of lines: "Data: 5 jun" or "Total" followed by "R$ 10,00".
+  function labeled(ls, re) {
+    for (let i = 0; i < ls.length; i++) {
+      const m = ls[i].match(re);
+      if (!m) continue;
+      const rest = ls[i].slice(m.index + m[0].length).replace(/^[\s:]+/, '');
+      return clip(rest || ls[i + 1], 60);
+    }
+  }
 
   function site() {
     for (const [name, s] of Object.entries(SITES)) if (s.host.test(location.hostname)) return [name, s];
@@ -779,7 +942,9 @@
       // SPAs hydrate after load: give the adapter a few seconds to see real content.
       const ready = () => {
         const t = s.page.call(s);
-        return t && (t !== 'search' || s.search.call(s).items.length > 0);
+        if (t === 'search') return s.search.call(s).items.length > 0;
+        if (t === 'orders' && s.orders) return s.orders.call(s).orders.length > 0;
+        return !!t;
       };
       for (const t0 = Date.now(); !ready() && !needUser(s) && Date.now() - t0 < 5000;) await sleep(400);
     }
@@ -821,6 +986,19 @@
         if (!r.items.length) { out.page = type = 'other'; delete out.count; delete out.next; }
       } else if (type === 'product') {
         Object.assign(out, s?.product ? s.product.call(s) : { product: genericProduct() });
+      } else if (type === 'orders' && s?.orders) {
+        const r = s.orders.call(s);
+        const from = opts.from || 0, n = opts.n || 30;
+        out.total = r.total || undefined;
+        out.count = r.orders.length;
+        out.orders = r.orders.slice(from, from + n);
+        const nx = r.more ? get(r.more) : nextPage();
+        if (nx) out.next = tag(nx);
+        if (s.order) out.note = 'orderInfo() / orderInfo(["o1","o2"]) traz valores e pagamento do detalhe sem sair da lista';
+      } else if (type === 'order' && s?.order) {
+        out.order = s.order.call(s, document);
+      } else if (type === 'orders' || type === 'order') {
+        out.text = lines($('main') || document.body, 20000).filter(l => l.length > 2 && l.length < 160).slice(0, 60);
       } else if (type === 'cart') {
         Object.assign(out, s?.cart ? s.cart.call(s) : { cart: genericCart(s?.key) });
       } else if (type === 'checkout') {
@@ -838,10 +1016,12 @@
       out.dialog = { text: clip(lines(d, 3000).join(' | '), 300), actions: actionsIn(d, 20) };
     }
     if (type === 'other' || opts.all) out.actions = actionsIn(document.body, opts.all ? 80 : 40, { near: !opts.all, skipChrome: !opts.all });
-    const sb = searchBox();
+    // On order pages the useful box filters your orders, not the store's catalogue in the header.
+    const sb = (type === 'orders' && $$('main input:not([type]), main input[type=text], main input[type=search], #searchOrdersInput')
+      .find(sized)) || searchBox();
     if (sb) out.searchBox = tag(sb, 'f');
     if (out.cart && !(out.cart.items || []).length) out.cart.empty = true;
-    for (const k of ['product', 'cart', 'dialog']) if (out[k]) prune(out[k]);
+    for (const k of ['product', 'cart', 'dialog', 'order']) if (out[k]) prune(out[k]);
     return prune(out);
   }
 
@@ -1029,6 +1209,70 @@
     return click(p.add);
   }
 
+  function orders(siteName) {
+    const s = siteName ? SITES[siteName] : site()[1];
+    if (!s?.ordersUrl) return { ok: false, err: `sem página de pedidos conhecida (use ${Object.keys(SITES).join(', ')})` };
+    return go(s.ordersUrl());
+  }
+
+  // Fetches order detail pages in the background (same-origin, SSR) and parses them with the
+  // site's order() extractor. ML charges per purchase, so packages of one purchase share a fetch.
+  const orderCache = new Map();
+  async function orderInfo(ids) {
+    const [, s] = site();
+    if (!s?.order) return { ok: false, err: 'detalhe por fetch não suportado neste site; abra o pedido e rode snap()' };
+    const list = ids == null ? (s.orders ? s.orders.call(s).orders.map(o => o.id) : []) : [].concat(ids);
+    const run = async id => {
+      const el = get(id);
+      const url = el && (el.href || el.closest('a')?.href);
+      if (!url) return { id, ok: false, err: 'id sem link de detalhe' };
+      const key = (url.match(/my_purchases\/(\d+)/) || [])[1] || url;
+      if (!orderCache.has(key)) {
+        orderCache.set(key, fetch(url, { credentials: 'include' })
+          .then(r => r.text())
+          .then(h => s.order.call(s, new DOMParser().parseFromString(h, 'text/html'))));
+      }
+      try {
+        // items/status in a fetched detail describe one package; the list already has those per package.
+        const { items, status, ...purchase } = await orderCache.get(key);
+        return { id, ...purchase };
+      } catch (e) { orderCache.delete(key); return { id, ok: false, err: e.message }; }
+    };
+    const out = [];
+    for (let i = 0; i < list.length; i += 3) out.push(...await Promise.all(list.slice(i, i + 3).map(run)));
+    return Array.isArray(ids) || ids == null ? out : out[0];
+  }
+
+  // Sets a cart line to n units by pressing its +/− (or choosing in its <select>), re-reading after each step.
+  async function setQty(id, n) {
+    n = parseInt(n, 10);
+    if (!(n >= 1)) return { ok: false, err: 'quantidade mínima é 1; para tirar do carrinho clique no "del" do item' };
+    const QTY = 'select, input[type=number], [role=spinbutton], .andes-input-stepper, [class*=stepper], [data-a-selector=value]';
+    const rowOf = el => { let r = el; while (r && r !== document.body && !$(QTY, r)) r = r.parentElement; return r !== document.body ? r : null; };
+    for (let step = 0; step < 40; step++) {
+      const el = get(id);
+      const row = el && rowOf(el);
+      if (!row) return el ? { ok: false, err: 'controle de quantidade não encontrado para esse item' } : notFound(id);
+      const sel = $('select', row);
+      if (sel) return select(tag(sel, 'f'), String(n));
+      const inp = $('input[type=number], input[type=text], [role=spinbutton]', row);
+      const cur = parseInt(inp ? inp.value : textOf($('.andes-input-stepper__value, [class*=stepper__value], [data-a-selector=value], [aria-live]', row) || EMPTY), 10);
+      if (cur === n) {
+        if (step) await settle(4000, 900); // totals are recalculated by a request after the last click
+        return { ok: true, qty: cur };
+      }
+      if (Number.isNaN(cur)) return { ok: false, err: 'não consegui ler a quantidade atual' };
+      const want = cur < n ? /(^\+$|aumentar|increase|increment|adicionar)/i : /(^[−-]$|diminuir|decrease|decrement)/i;
+      const btn = $$('button, [role=button]', row).find(b => sized(b) && want.test(`${label(b)} ${b.id} ${cls(b)} ${b.getAttribute('data-a-selector') || ''}`));
+      if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
+        return { ok: false, qty: cur, err: cur < n ? 'não dá para aumentar (limite de estoque/compra)' : 'não dá para diminuir' };
+      }
+      click(tag(btn));
+      await settle(3000, 400);
+    }
+    return { ok: false, err: 'não convergiu' };
+  }
+
   async function waitFor(what, ms = 10000) {
     if (typeof what === 'number') { await sleep(what); return { ok: true }; }
     const t0 = Date.now();
@@ -1047,12 +1291,14 @@
     'snap({n,from,all}) → JSON da página | s(opts) → mesmo conteúdo em texto compacto',
     'click(id) | type(id,texto,{enter}) | select(id,valorOuTexto) | focus(id) | rect(id)',
     'find("texto",{any}) → ids que contêm o texto | read(id) → texto completo de um bloco',
-    'search(q,[site]) | cart([site]) | addToCart([itemId]) | go(url) | scroll(down|up|top|bottom|id)',
+    'search(q,[site]) | cart([site]) | addToCart([itemId]) | setQty(itemId,n) | go(url) | scroll(down|up|top|bottom|id)',
+    'orders([site]) → abre "minhas compras" | orderInfo([ids]) → valores/pagamento dos pedidos (ML, via fetch)',
     'wait(ms|"texto"|"#sel") | notify("msg ao usuário") | sites: ' + Object.keys(SITES).join(', '),
   ].join('\n');
 
   window.ShopBuddy = Object.freeze({
     v: V, snap, s: snapText, toText, click, rect, focus, type, select, find, read, scroll, go,
-    search, cart, addToCart, wait: waitFor, notify, help,
+    search, cart, addToCart, setQty, orders, orderInfo, wait: waitFor, notify, help,
+    _raw: id => { const el = typeof id === 'string' ? get(id) : id; return el ? JSON.stringify(rawText(el)) : null; },
   });
 })();

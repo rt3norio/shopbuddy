@@ -32,6 +32,9 @@ const HELP = `ShopBuddy CLI — uso: node sb.mjs <comando> [args] [--tab X] [--j
   select <id> <valor|texto>    escolhe opção de <select>
   add [itemId]                 adicionar ao carrinho (produto atual ou card da busca)
   cart [--site ml]             abre o carrinho
+  qty <itemId> <n>             muda a quantidade de um item do carrinho
+  orders [--site ml]           abre "minhas compras" (pedidos já feitos)
+  orderinfo [ids...]           valores/pagamento dos pedidos listados (ML)
   find <texto> [--any]         acha ids pelo texto
   read <id>                    texto completo de um bloco
   scroll <down|up|top|bottom|id>
@@ -277,6 +280,9 @@ async function main() {
       case 'go': res = await call(s, `ShopBuddy.go(${J(id)})`); break;
       case 'back': res = await s.eval('history.back(), {ok:true}'); break;
       case 'scroll': res = await call(s, `ShopBuddy.scroll(${J(id || 'down')})`); break;
+      case 'qty': res = await call(s, `ShopBuddy.setQty(${J(id)}, ${J(pos[1])})`); break;
+      case 'orders': res = await call(s, `ShopBuddy.orders(${flags.site ? J(flags.site) : ''})`); break;
+      case 'orderinfo': console.log(JSON.stringify(await call(s, `ShopBuddy.orderInfo(${pos.length ? J(pos) : ''})`))); return;
       case 'find': console.log((await call(s, `ShopBuddy.find(${J(pos.join(' '))}, {any: ${!!flags.any}})`)).join('\n') || '(nada)'); return;
       case 'read': console.log(await call(s, `ShopBuddy.read(${J(id)})`)); return;
       case 'eval': await show(s, await call(s, pos.join(' '))); return;

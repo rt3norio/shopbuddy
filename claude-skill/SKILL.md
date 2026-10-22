@@ -1,6 +1,6 @@
 ---
 name: shopbuddy
-description: Navegar e comprar em Mercado Livre, Amazon, Shopee e AliExpress no Chrome do usuário lendo a página como JSON compacto (ShopBuddy) em vez de HTML/screenshot. Use para buscar produtos, comparar preço/frete/prazo, abrir produto, escolher variação, adicionar ao carrinho e conferir o carrinho.
+description: Navegar e comprar em Mercado Livre, Amazon, Shopee e AliExpress no Chrome do usuário lendo a página como JSON compacto (ShopBuddy) em vez de HTML/screenshot. Use para buscar produtos, comparar preço/frete/prazo, abrir produto, escolher variação, adicionar ao carrinho, ajustar o carrinho e consultar compras já feitas (quando, quanto, status).
 ---
 
 # ShopBuddy
@@ -16,18 +16,24 @@ Projeto: `<REPO>` (extensão em `extension/`, CLI em `cli/`).
 4. Agir: `() => ShopBuddy.click("p3")`, `() => ShopBuddy.type("f1","pilha aa",{enter:true})`, `() => ShopBuddy.select("f8","2")`,
    `() => ShopBuddy.search("resistor 10k","ml")`, `() => ShopBuddy.addToCart()`, `() => ShopBuddy.cart("ml")`,
    `() => ShopBuddy.find("frete")` (acha ids por texto), `() => ShopBuddy.read("a12")` (texto longo de um bloco).
+   Carrinho: `() => ShopBuddy.setQty("p6", 3)` (via +/−, espera o total recalcular); remover = `click(item.del)`.
+   Compras já feitas: `() => ShopBuddy.orders("ml")` abre a lista; `async () => ShopBuddy.orderInfo(["o1","o4"])` traz
+   valores/pagamento do detalhe por fetch, sem sair da lista (ML; ~2 s por compra, pacotes da mesma compra compartilham).
+   Buscar nos pedidos: `type(snap.searchBox, "resistor", {enter:true})` na página de pedidos (filtra as compras).
 5. Depois de ação que navega, rode `s()` de novo (se der "context destroyed"/ShopBuddy undefined: espere ~1s, reinjete se preciso).
 6. Se `ShopBuddy.click` não surtir efeito num botão, use `take_snapshot` + `click(uid)` do MCP só nesse passo.
 
 ## Caminho 2 — CLI (Chrome aberto com --remote-debugging-port; não funciona no modo toggle)
 `node <REPO>/cli/sb.mjs <cmd>` — cada ação já imprime o snapshot novo.
 `open ml|amazon|shopee|ali` · `search <q> --site ml` · `snap [--n 10 --from 10 --all]` · `click <id>` (clique real) · `type <id> <texto> --enter` ·
-`select <id> <valor>` · `add [itemId]` · `cart` · `find <txt>` · `read <id>` · `scroll down` · `back` · `wait-user`. Porta: env `SB_CDP`.
+`select <id> <valor>` · `add [itemId]` · `cart` · `qty <id> <n>` · `orders` · `orderinfo [ids]` · `find <txt>` · `read <id>` · `scroll down` · `back` · `wait-user`. Porta: env `SB_CDP`.
 
 ## Lendo o JSON
-- `page`: search | product | cart | checkout | login | captcha | other. `items[]` na busca: `price`, `old` (preço riscado), `ship`, `full`, `prime`, `ad` (patrocinado), `intl`, `add` (botão direto), `alt` (outra oferta ML).
+- `page`: search | product | cart | checkout | orders | order | login | captcha | other. `items[]` na busca: `price`, `old` (preço riscado), `ship`, `full`, `prime`, `ad` (patrocinado), `intl`, `add` (botão direto), `alt` (outra oferta ML).
 - `product`: `price`, `ship`, `stock`, `seller`, `variants[{name,opts:["v1:Azul [x]"]}]` ([x] = selecionada), `qty`, `add`, `buy`, `offers`.
-- `cart`: `items[{id,name,price,qty,inc,dec,del}]`, `summary`, `checkout`, `empty`. `dialog` = popup/gaveta aberta (ex.: confirmação de "adicionado").
+- `cart`: `groups[{g,seller,ship,shipWas,hint}]` (ML: frete por vendedor; `hint` = quanto falta p/ frete grátis), `items[{id,g,name,price,old,qty,inc,dec,del,sel}]` (`sel` = checkbox "vai para o checkout"), `summary` (ML: `{"Produtos (n)":…, "Envios":…, "Total":…}` em números; outros sites: linhas), `checkout`, `empty`. `dialog` = popup/gaveta aberta (ex.: "adicionado ao carrinho").
+- `page:"orders"`: `orders[{id,date,status,info,name,qty,seller,purchase,again,…}]` (ML: sem preço na lista → `orderInfo`; Ali: `number`, `items` "nome [variação] R$ x xN", `total`), `next` (próxima página / "ver mais pedidos": clique, espere ~3 s, snap), `searchBox`. `page:"order"`: detalhe (`amounts` com produtos/desconto/frete/pagamento/total).
+- Pedidos ML por compra: o ML cobra por compra (carrinho fechado), não por item; itens com o mesmo `purchase` dividem o mesmo total.
 - `next` = id da próxima página de resultados. `searchBox` = id do campo de busca. `warn` = aba em segundo plano (traga para frente).
 
 ## Regras
