@@ -70,9 +70,14 @@ O ML não mostra preço na lista de compras, só no detalhe, e cobra por compra 
 não por item. `orderInfo()` abre os detalhes por `fetch` sem sair da lista:
 ```
 {"id":"o1","date":"3 de março","name":"Kit 100 Resistores 10k 1/4w","qty":"1 unidade","status":"Entregue","purchase":"2000000000000001"}
-orderInfo("o1") → {"number":"2000000000000001","amounts":{"Produtos (3)":120.5,"Desconto à vista":-6.02,"Frete":0,
+orderInfo("o1") → {"number":"2000000000000001",
+                   "items":[{"name":"Kit 100 Resistores 10k 1/4w","price":19.02,"qty":1},
+                            {"name":"Capacitor Eletrolítico 100uf","price":25.4,"old":27.9,"qty":1,"variation":"Tensão: 35V"}, …],
+                   "amounts":{"Produtos (3)":120.5,"Desconto à vista":-6.02,"Frete":0,
                    "Pagamentos":"Uma parcela de R$ 114,48 Visa **** 0000","Total":114.48}}
 ```
+A lista mostra só o primeiro produto de cada pacote; `orderInfo` traz todos os produtos da compra, com o
+preço já com desconto (a soma dos itens bate com o total).
 No AliExpress a lista já traz tudo: `{"date":"5 jun, 2025","number":"8200000000000001","status":"Concluído","seller":"Example Store","items":["Placa de desenvolvimento ESP32… [V3] R$ 99.9 x1"],"total":112.4}`.
 
 ## CLI

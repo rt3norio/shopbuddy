@@ -18,7 +18,9 @@ Projeto: `<REPO>` (extensão em `extension/`, CLI em `cli/`).
    `() => ShopBuddy.find("frete")` (acha ids por texto), `() => ShopBuddy.read("a12")` (texto longo de um bloco).
    Carrinho: `() => ShopBuddy.setQty("p6", 3)` (via +/−, espera o total recalcular); remover = `click(item.del)`.
    Compras já feitas: `() => ShopBuddy.orders("ml")` abre a lista; `async () => ShopBuddy.orderInfo(["o1","o4"])` traz
-   valores/pagamento do detalhe por fetch, sem sair da lista (ML; ~2 s por compra, pacotes da mesma compra compartilham).
+   todos os produtos da compra (`items[{name,price,old,qty,variation}]`, preço já com desconto: a soma bate com o total)
+   + valores/pagamento, por fetch, sem sair da lista (ML; ~2 s por compra; pacotes da mesma compra compartilham).
+   A lista mostra só o 1º produto de cada pacote: para "o que veio nessa compra", use `orderInfo`.
    Buscar nos pedidos: `type(snap.searchBox, "resistor", {enter:true})` na página de pedidos (filtra as compras).
 5. Depois de ação que navega, rode `s()` de novo (se der "context destroyed"/ShopBuddy undefined: espere ~1s, reinjete se preciso).
 6. Se `ShopBuddy.click` não surtir efeito num botão, use `take_snapshot` + `click(uid)` do MCP só nesse passo.

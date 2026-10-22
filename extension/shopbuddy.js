@@ -45,6 +45,15 @@
   const BLOCK = /^(DIV|P|LI|UL|OL|H[1-6]|TR|TD|TH|TABLE|SECTION|ARTICLE|ASIDE|HEADER|FOOTER|NAV|MAIN|FORM|DL|DT|DD|BR|FIGURE|FIGCAPTION|BUTTON|LABEL|FIELDSET)$/;
   const STRIKE_CLS = /(^|[\s_-])(original|old-?price|strike|strikethrough|before|list-?price|a-text-price|price--original|price-original|del)([\s_-]|$)/i;
 
+  // ML purchase pages: integer and cents in separate spans, the "R$" aria-hidden.
+  function richPrice(el) {
+    const int = norm($('.bf-ui-price-small', el)?.textContent);
+    if (!int) return '';
+    const c = norm($('.bf-ui-price-small-cents', el)?.textContent);
+    const s = `R$ ${int}${c ? ',' + c : ''}`;
+    return /--strike/.test(cls(el)) ? `\u0001${s}\u0002` : s;
+  }
+
   function andesMoney(el) {
     const f = $('.andes-money-amount__fraction', el);
     const aria = el.getAttribute('aria-label') || '';
@@ -71,6 +80,7 @@
         if (SKIP.test(tag)) return;
         if ((!keepHidden && n.getAttribute('aria-hidden') === 'true') || n.hidden || n.hasAttribute('data-sb-ui')) return;
         if (n.matches('.andes-money-amount')) { out.push(' ' + andesMoney(n) + ' '); return; }
+        if (n.matches('.bf-ui-rich-price')) { out.push(' ' + richPrice(n) + ' '); return; }
         if (n.getAttribute('role') === 'img' && n.getAttribute('aria-label')) { out.push(' ' + n.getAttribute('aria-label') + ' '); return; }
         const blk = BLOCK.test(tag);
         const strike = tag === 'S' || tag === 'DEL' || STRIKE_CLS.test(cls(n));
@@ -621,15 +631,37 @@
           }
           amounts[lastKey] = val;
         }
-        const items = $$('[class*=context-with-ellipsis__title]', root).map((t, i, all) => {
-          const sub2 = textOf(t.parentElement?.querySelector('[class*=context-with-ellipsis__subtitle]') || EMPTY);
-          return clip(`${textOf(t)}${sub2 ? ' — ' + sub2.replace(/\s*\|?\s*ver detalhe/i, '') : ''}`, 100);
+        // Every product of the purchase sits in the (collapsed) "Detalhes do pagamento e envio" block,
+        // one row per product with price, struck price, quantity and variation. The header above only
+        // shows the package's first product, so it is just the fallback.
+        const block = $('.bf-ui-expandable', root);
+        let items = (block ? $$('.bf-ui-row-with-ellipsis', block) : $$('a.bf-ui-row-with-ellipsis[href*="orderId="]', root)).map(a => {
+          const raw = rawText(a);
+          const pr = prices(raw);
+          const subs = $$('[class*=secondary-title]', a).map(p => textOf(p));
+          const qty = strip(raw).match(/(\d+)\s*(?:unidades?|un\.)/i);
+          return prune({
+            name: clip(textOf($('[class*=__title]', a) || a), 90),
+            price: pr.price, old: pr.old,
+            qty: qty ? +qty[1] : undefined,
+            variation: clip(subs.slice(1).join(' · '), 60),
+            order: ((a.getAttribute('href') || '').match(/orderId=(\d+)/) || [])[1],
+          });
         });
+        // The same row can be rendered twice; two different products may share a name, so only dedupe by order id.
+        items = items.filter((it, i) => !it.order || items.findIndex(x => x.order === it.order) === i);
+        if (!items.length) {
+          items = $$('[class*=context-with-ellipsis__title]', root).map(t => {
+            const sub2 = textOf(t.parentElement?.querySelector('[class*=context-with-ellipsis__subtitle]') || EMPTY);
+            return clip(`${textOf(t)}${sub2 ? ' — ' + sub2.replace(/\s*\|?\s*ver detalhe/i, '') : ''}`, 100);
+          });
+          items = [...new Set(items)];
+        }
         return prune({
           date: sub.split('|')[0].trim() || undefined,
           number: (sub.match(/#\s*(\d+)/) || [])[1],
           status: clip([textOf($('.feedback-container-title', root) || EMPTY), textOf($('.feedback-container-description', root) || EMPTY)].filter(Boolean).join(' · '), 160),
-          items: [...new Set(items)],
+          items,
           amounts,
           seller: clip(textOf($('.text-with-link__subtext, .text-with-link__text', root) || EMPTY), 50),
         });
@@ -1233,8 +1265,8 @@
           .then(h => s.order.call(s, new DOMParser().parseFromString(h, 'text/html'))));
       }
       try {
-        // items/status in a fetched detail describe one package; the list already has those per package.
-        const { items, status, ...purchase } = await orderCache.get(key);
+        // status describes one package (the list has it per package); items cover the whole purchase.
+        const { status, ...purchase } = await orderCache.get(key);
         return { id, ...purchase };
       } catch (e) { orderCache.delete(key); return { id, ok: false, err: e.message }; }
     };
